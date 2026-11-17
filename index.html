@@ -118,17 +118,54 @@ function render(){
     </section>`;
   }
   document.getElementById("schedule").innerHTML = out;
-  document.querySelectorAll(".check").forEach(box => box.addEventListener("change", async e => {
-    const id = e.target.dataset.id;
-    const next = {...completed};
-    if(e.target.checked) next[id] = true; else delete next[id];
+ 
+document.querySelectorAll(".check").forEach(box => {
+  box.addEventListener("change", async e => {
+    const checkbox = e.target;
+    const id = checkbox.dataset.id;
+    const wasCompleted = !!completed[id];
+
+    // Ask for PIN only when removing an existing tick
+    if (wasCompleted && !checkbox.checked) {
+      const enteredPin = prompt("Enter PIN to remove this tick:");
+
+      if (enteredPin === null) {
+        checkbox.checked = true;
+        return;
+      }
+
+      if (enteredPin !== "SET_YOUR_PIN") {
+        checkbox.checked = true;
+
+        const sound = new Audio("./Recording.m4a");
+        sound.play().catch(() => {});
+
+        alert("Incorrect PIN!");
+        return;
+      }
+    }
+
+    const next = { ...completed };
+
+    if (checkbox.checked) {
+      next[id] = true;
+    } else {
+      delete next[id];
+    }
+
     completed = next;
     render();
-    if(database && ready) {
-      try { await set(ref(database, "roomCleaning/completed"), completed); }
-      catch(err) { alert("Could not sync the tick. Check your internet connection."); }
+
+    if (database && ready) {
+      try {
+        await set(ref(database, "roomCleaning/completed"), completed);
+      } catch (err) {
+        alert("Could not sync the tick. Check your internet connection.");
+      }
     }
-  }));
+  });
+});
+
 }
 
 document.getElementById("print").addEventListener("click", () => window.print());
