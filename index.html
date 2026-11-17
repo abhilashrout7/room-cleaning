@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#17324d">
+<title>Room Cleaning Duty Tracker</title>
+<style>
+:root{--navy:#17324d;--blue:#2f6f9f;--pale:#eaf2f8;--line:#d9e2ea;--green:#198754;--bg:#f5f7fa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#203040;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+header{background:linear-gradient(135deg,#17324d,#2f6f9f);color:white;padding:27px 18px;text-align:center}
+header h1{margin:0;font-size:clamp(1.35rem,4vw,2rem)}
+header p{margin:8px 0 0;color:#dceaf5}
+main{max-width:960px;margin:22px auto;padding:0 14px 40px}
+.notice{background:white;border:1px solid var(--line);border-radius:12px;padding:13px 15px;margin-bottom:15px;font-size:.92rem}
+#connection{font-weight:700;color:#9a6700}
+#connection.online{color:var(--green)}
+.members{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
+.member{background:white;border:1px solid var(--line);border-radius:12px;padding:13px 8px;text-align:center}
+.member strong{display:block;color:var(--navy);font-size:.95rem}
+.count{font-size:1.45rem;font-weight:750;margin-top:4px}
+.member small{color:#64748b}
+.week{background:white;border:1px solid var(--line);border-radius:14px;margin:15px 0;overflow:hidden}
+.week h2{font-size:1.08rem;margin:0;padding:14px 16px;background:var(--pale);color:var(--navy)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:11px 13px;text-align:left;border-bottom:1px solid #edf1f5}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+tr:last-child td{border-bottom:0}
+td:last-child,th:last-child{text-align:center;width:90px}
+.check{width:23px;height:23px;accent-color:var(--green);cursor:pointer;vertical-align:middle}
+.done-row td{color:#6b7c8f}
+.done-row td:nth-child(2){text-decoration:line-through;text-decoration-color:#9aabb9}
+.status{font-size:.82rem;color:#64748b}
+.progress-wrap{height:9px;background:#e8edf2;border-radius:99px;overflow:hidden;margin:0 16px 14px}
+.progress{height:100%;background:var(--green);transition:width .2s}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+button{border:0;border-radius:9px;padding:10px 14px;font-weight:650;cursor:pointer}
+.primary{background:var(--navy);color:white}
+.secondary{background:white;border:1px solid var(--line);color:var(--navy)}
+footer{text-align:center;color:#718096;font-size:.82rem;margin-top:24px}
+@media(max-width:560px){.members{grid-template-columns:repeat(2,1fr)}th,td{padding:10px 8px}.status{display:none}}
+@media print{body{background:white}header{background:white;color:#17324d;padding:10px}header p{color:#526477}.actions,.notice{display:none}.week{break-inside:avoid}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Room Cleaning Duty Tracker</h1>
+  <p>4-week rotation · One member per day · 7 duties each</p>
+</header>
+<main>
+  <div class="notice">
+    <strong>Anyone can tick or untick a box.</strong> All four members use this same website link.
+    <div style="margin-top:6px">Connection: <span id="connection">Connecting…</span></div>
+    <div id="hint" style="margin-top:5px;color:#64748b">Ticks sync between phones when the shared online database is configured.</div>
+  </div>
+  <section class="members" id="summary" aria-label="Member progress"></section>
+  <div class="actions">
+    <button class="secondary" id="print">Print chart</button>
+  </div>
+  <div id="schedule"></div>
+  <footer>Members: Abhilash · Anup · Bubu · Pritam</footer>
+</main>
+
+<!-- SETUP: Create a Firebase Realtime Database, then paste its web app config below.
+     In Firebase Realtime Database Rules, allow read/write for this shared tracker.
+     Anyone with the website link can then read, tick, untick and reset boxes. -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+
+// Replace these placeholder values with your Firebase project config.
+const firebaseConfig = {
+  apiKey: "AIzaSyDvVOfJUOJQzHfoXTHl91vto4xr6kW-aXU",
+  authDomain: "room-clean-f2cc7.firebaseapp.com",
+  databaseURL: "https://room-clean-f2cc7-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "room-clean-f2cc7",
+  storageBucket: "room-clean-f2cc7.firebasestorage.app",
+  messagingSenderId: "816559349656",
+  appId: "1:816559349656:web:c17794777dcb4d855515ed",
+  measurementId: "G-KLRV1MX005"
+};
+
+const members = ["Abhilash","Anup","Bubu","Pritam"];
+const days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const connectionEl = document.getElementById("connection");
+const hintEl = document.getElementById("hint");
+let completed = {};
+let database = null;
+let ready = false;
+
+function taskId(week, day){ return `w${week}-d${day}`; }
+function assignedMember(week, day){ return members[(week - 1 + day) % 4]; }
+
+function render(){
+  const counts = Object.fromEntries(members.map(m => [m,0]));
+  for(let w=1; w<=4; w++) for(let d=0; d<7; d++){
+    if(completed[taskId(w,d)]) counts[assignedMember(w,d)]++;
+  }
+  document.getElementById("summary").innerHTML = members.map(m =>
+    `<div class="member"><strong>${m}</strong><div class="count">${counts[m]} / 7</div><small>duties completed</small></div>`
+  ).join("");
+
+  let out = "";
+  for(let w=1; w<=4; w++){
+    let weekDone = 0;
+    let rows = days.map((day,d) => {
+      const id = taskId(w,d), isDone = !!completed[id], person = assignedMember(w,d);
+      if(isDone) weekDone++;
+      return `<tr class="${isDone ? "done-row" : ""}">
+        <td>${day}</td><td><strong>${person}</strong></td>
+        <td><input class="check" type="checkbox" aria-label="Mark ${person}'s ${day} cleaning complete" data-id="${id}" ${isDone ? "checked" : ""}></td>
+      </tr>`;
+    }).join("");
+    out += `<section class="week"><h2>Week ${w} <span class="status">— ${weekDone}/7 completed</span></h2>
+      <div class="progress-wrap"><div class="progress" style="width:${weekDone/7*100}%"></div></div>
+      <table><thead><tr><th>Day</th><th>Responsible member</th><th>Done</th></tr></thead><tbody>${rows}</tbody></table>
+    </section>`;
+  }
+  document.getElementById("schedule").innerHTML = out;
+  document.querySelectorAll(".check").forEach(box => box.addEventListener("change", async e => {
+    const id = e.target.dataset.id;
+    const next = {...completed};
+    if(e.target.checked) next[id] = true; else delete next[id];
+    completed = next;
+    render();
+    if(database && ready) {
+      try { await set(ref(database, "roomCleaning/completed"), completed); }
+      catch(err) { alert("Could not sync the tick. Check your internet connection."); }
+    }
+  }));
+}
+
+document.getElementById("print").addEventListener("click", () => window.print());
+
+const configured = firebaseConfig.apiKey !== "PASTE_API_KEY" &&
+                   firebaseConfig.projectId !== "PASTE_PROJECT_ID" &&
+                   firebaseConfig.appId !== "PASTE_APP_ID" &&
+                   firebaseConfig.databaseURL.startsWith("https://");
+if(configured) {
+  try {
+    const app = initializeApp(firebaseConfig);
+    database = getDatabase(app);
+    onValue(ref(database, "roomCleaning/completed"), snapshot => {
+      completed = snapshot.val() || {};
+      ready = true;
+      connectionEl.textContent = "Connected — updates sync across phones";
+      connectionEl.classList.add("online");
+      hintEl.textContent = "Shared online checklist is active.";
+      render();
+    }, error => {
+      connectionEl.textContent = "Connection error";
+      hintEl.textContent = "Check Firebase database URL and read/write rules.";
+    });
+  } catch(error) {
+    connectionEl.textContent = "Setup incomplete";
+    hintEl.textContent = "Firebase configuration needs to be added before phone-to-phone syncing works.";
+  }
+} else {
+  connectionEl.textContent = "Setup needed";
+  hintEl.textContent = "Firebase config is installed. Complete the Realtime Database security rules, then publish this file online to sync ticks across phones.";
+  render();
+}
+</script>
+</body>
+</html>
